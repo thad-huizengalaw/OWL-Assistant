@@ -81,52 +81,58 @@ if roles[selected_role]["can_start"]:
             else:
                 st.error("Client not found—try one of the examples.")
 
-# Pending Calls View (for responders)
+# Pending Calls View (for responders) - FIXED: Now shows delegated calls to the right person
 if roles[selected_role]["can_respond"]:
     st.header(f"{selected_role} - Pending Calls")
-    if not st.session_state.pending_calls:
-        st.info("No pending calls—have Receptionist start one!")
+    # Filter visible calls: pending for all, OR delegated specifically to this role
+    visible_calls = [
+        call for call in st.session_state.pending_calls 
+        if call["status"] == "pending" or 
+           (call["status"] == "delegated" and call["delegated_to"] == selected_role)
+    ]
+    if not visible_calls:
+        st.info("No pending calls for you—have someone start one or delegate here!")
     else:
-        for i, call in enumerate(st.session_state.pending_calls):
-            if call["status"] == "pending":
-                with st.expander(f"{call['client']} - {call['question'][:50]}..."):
-                    st.write(f"**Details:** {call['details']}")
-                    st.write(f"**AI Suggestion:** {call['ai_suggestion']}")
-                    
-                    # Response options
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        if st.button(f"Option 1: Ready/Schedule Now", key=f"opt1_{i}"):
-                            call["response"] = "Great news! Your Design Meeting is ready—let's schedule for next week."
-                            call["status"] = "responded"
-                            st.rerun()
-                    with col2:
-                        if st.button(f"Option 2: In 2 Weeks", key=f"opt2_{i}"):
-                            call["response"] = "Not quite ready, but we can schedule your meeting in 2 weeks."
-                            call["status"] = "responded"
-                            st.rerun()
-                    with col3:
-                        if st.button("Custom Response", key=f"custom_{i}"):
-                            custom_resp = st.text_input("Your response:", key=f"custom_input_{i}")
-                            if st.button("Send Custom", key=f"send_custom_{i}"):
-                                call["response"] = custom_resp
-                                call["status"] = "responded"
-                                st.rerun()
-                    
-                    # Delegate
-                    if roles[selected_role]["delegates_to"]:
-                        delegate_to = st.selectbox("Or Delegate To:", ["None"] + roles[selected_role]["delegates_to"], key=f"delegate_{i}")
-                        if delegate_to != "None" and st.button("Delegate", key=f"delegate_btn_{i}"):
-                            call["delegated_to"] = delegate_to
-                            call["status"] = "delegated"
-                            st.success(f"Delegated to {delegate_to}!")
-                            st.rerun()
-                    
-                    # Mark Done (loops back to receptionist)
-                    if st.button("Mark Done & Notify Receptionist", key=f"done_{i}"):
-                        call["status"] = "done"
-                        st.success(f"Response sent: '{call['response'] or 'Handled!'}' Receptionist can now call back.")
+        for i, call in enumerate(visible_calls):
+            prefix = "Delegated to you: " if call["status"] == "delegated" else ""
+            with st.expander(f"{prefix}{call['client']} - {call['question'][:50]}..."):
+                st.write(f"**Details:** {call['details']}")
+                st.write(f"**AI Suggestion:** {call['ai_suggestion']}")
+                
+                # Response options (same for all responders)
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button(f"Option 1: Ready/Schedule Now", key=f"opt1_{i}"):
+                        call["response"] = "Great news! Your Design Meeting is ready—let's schedule for next week."
+                        call["status"] = "done"  # Direct to done, since handled
                         st.rerun()
+                with col2:
+                    if st.button(f"Option 2: In 2 Weeks", key=f"opt2_{i}"):
+                        call["response"] = "Not quite ready, but we can schedule your meeting in 2 weeks."
+                        call["status"] = "done"
+                        st.rerun()
+                with col3:
+                    if st.button("Custom Response", key=f"custom_{i}"):
+                        custom_resp = st.text_input("Your response:", key=f"custom_input_{i}")
+                        if st.button("Send Custom", key=f"send_custom_{i}"):
+                            call["response"] = custom_resp
+                            call["status"] = "done"
+                            st.rerun()
+                
+                # Delegate (only if this role can)
+                if roles[selected_role]["delegates_to"]:
+                    delegate_to = st.selectbox("Or Delegate To:", ["None"] + roles[selected_role]["delegates_to"], key=f"delegate_{i}")
+                    if delegate_to != "None" and st.button("Delegate", key=f"delegate_btn_{i}"):
+                        call["delegated_to"] = delegate_to
+                        call["status"] = "delegated"
+                        st.success(f"Delegated to {delegate_to}!")
+                        st.rerun()
+                
+                # Mark Done (loops back to receptionist)
+                if st.button("Mark Done & Notify Receptionist", key=f"done_{i}"):
+                    call["status"] = "done"
+                    st.success(f"Response sent: '{call['response'] or 'Handled!'}' Receptionist can now call back.")
+                    st.rerun()
 
 # Receptionist Response View
 if selected_role == "Receptionist":
@@ -141,15 +147,20 @@ if selected_role == "Receptionist":
     else:
         st.info("Waiting for responses...")
 
-# Reminders (for delays >1 min in demo)
+# Reminders (for delays >1 min in demo) - Updated to include delegated
 st.header("Reminders (Auto-Nags)")
-for call in st.session_state.pending_calls:
-    if call["status"] == "pending" and (time.time() - call["timestamp"] > 60):  # Fake 1-min delay
-        st.warning(f"Nudge: {call['client']} - {call['question'][:30]}... Finish by EOD? Suggested: {call['ai_suggestion'][:50]}")
-        if st.button("Quick Mark Done", key=f"quick_{call['client']}"):
-            call["status"] = "done"
-            call["response"] = "Follow-up completed."
-            st.rerun()
+reminder_calls = [
+    call for call in st.session_state.pending_calls 
+    if (call["status"] == "pending" or 
+        (call["status"] == "delegated" and call["delegated_to"] == selected_role)) and 
+       (time.time() - call["timestamp"] > 60)
+]
+for call in reminder_calls:
+    st.warning(f"Nudge: {call['client']} - {call['question'][:30]}... Finish by EOD? Suggested: {call['ai_suggestion'][:50]}")
+    if st.button("Quick Mark Done", key=f"quick_{call['client']}"):
+        call["status"] = "done"
+        call["response"] = "Follow-up completed."
+        st.rerun()
 
 # Office Manager Full View
 if selected_role == "Office Manager":
@@ -160,4 +171,4 @@ if selected_role == "Office Manager":
 
 # Footer
 st.write("---")
-st.write("*Prototype v1 - Built for your firm. Next: Real Lawmatics connect + more clients.*")
+st.write("*Prototype v1.1 - Delegation fixed! Next: Real Lawmatics connect + more clients.*")
